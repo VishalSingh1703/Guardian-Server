@@ -1,52 +1,67 @@
 import os
-import uuid
 import logging
 from datetime import datetime
 from typing import Dict, Any
+from twilio.rest import Client
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("telephony-services")
 
-def dummy_make_twilio_call(to_phone: str, from_phone: str) -> Dict[str, Any]:
+def make_actual_twilio_call(to_phone: str, from_phone: str) -> Dict[str, Any]:
     """
-    Dummy function that simulates making a Twilio outbound call configured to use
-    Pipecat and Gemini Live.
+    Initiates an actual Twilio outbound call pointing to the server's TwiML endpoint.
     """
-    logger.info(f"[SIMULATION] Initiating Twilio call from '{from_phone}' to '{to_phone}'...")
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    server_url = os.getenv("SERVER_URL")
+
+    if not account_sid or not auth_token:
+        raise ValueError("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN must be set in the environment.")
     
-    # Simulate loading server url for Twilio webhook callback / TwiML
-    server_url = os.getenv("SERVER_URL", "https://your-ngrok-subdomain.ngrok-free.app")
-    logger.info(f"[SIMULATION] Twilio will fetch TwiML instructions from: {server_url}/twilio-voice")
-    logger.info(f"[SIMULATION] Pipecat WebRTC / WebSocket agent endpoint: ws://{server_url.split('://')[-1]}/ws")
-    logger.info("[SIMULATION] Connecting Pipecat agent pipeline with Gemini Live model backend...")
+    if not server_url:
+        raise ValueError("SERVER_URL must be set in the environment to serve TwiML callbacks.")
+
+    logger.info(f"Initiating actual Twilio call from '{from_phone}' to '{to_phone}'...")
     
-    mock_sid = f"CA{uuid.uuid4().hex}"
+    client = Client(account_sid, auth_token)
+    
+    # Twilio will fetch the call instructions (TwiML) from this URL when answered
+    twiml_url = f"{server_url}/twilio-voice"
+    logger.info(f"Setting Twilio callback URL to: {twiml_url}")
+
+    call = client.calls.create(
+        to=to_phone,
+        from_=from_phone,
+        url=twiml_url
+    )
     
     result = {
-        "sid": mock_sid,
-        "status": "queued",
+        "sid": call.sid,
+        "status": call.status,
         "to": to_phone,
         "from_": from_phone,
         "date_created": datetime.utcnow().isoformat(),
-        "simulation": True,
-        "message": "Dummy Twilio Pipecat call initiated successfully (Simulated)."
+        "simulation": False,
+        "message": f"Twilio call initiated successfully with SID: {call.sid}"
     }
     
-    logger.info(f"[SIMULATION] Call queued successfully with mock SID: {mock_sid}")
+    logger.info(f"Call successfully queued with Twilio. SID: {call.sid}")
     return result
 
 def initiate_call_flow(to_phone: str, from_phone: str = None) -> Dict[str, Any]:
     """
-    Function called by the endpoint. Validates arguments and triggers the dummy call.
+    Function called by the endpoint. Validates arguments and triggers the Twilio call.
     """
     logger.info(f"Received request to initiate call flow to '{to_phone}'")
     
     if not from_phone:
-        from_phone = os.getenv("TWILIO_PHONE_NUMBER", "+1234567890")
+        from_phone = os.getenv("TWILIO_PHONE_NUMBER")
+        if not from_phone:
+            raise ValueError("TWILIO_PHONE_NUMBER must be set in the environment or passed explicitly.")
         logger.info(f"No 'from_phone' provided. Using default Twilio number: {from_phone}")
         
-    # Trigger the dummy function
-    call_result = dummy_make_twilio_call(to_phone, from_phone)
+    # Trigger the actual Twilio call
+    call_result = make_actual_twilio_call(to_phone, from_phone)
     
     return call_result

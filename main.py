@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Response
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -34,9 +34,9 @@ async def health_check():
     """
     return {
         "status": "online",
-        "server": "Guardian AI Telephony Temp Server",
+        "server": "Guardian AI Telephony Server",
         "configs_loaded": {
-            "twilio_configured": os.getenv("TWILIO_ACCOUNT_SID") != "your_twilio_account_sid_here",
+            "twilio_configured": os.getenv("TWILIO_ACCOUNT_SID") not in [None, "", "your_twilio_account_sid_here"],
             "server_url": os.getenv("SERVER_URL")
         }
     }
@@ -53,10 +53,28 @@ async def make_call(payload: CallRequest):
         )
         return result
     except Exception as e:
+        logger_err = str(e)
+        import logging
+        logging.getLogger("uvicorn.error").error(f"Error initiating call: {logger_err}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to initiate call flow: {str(e)}"
         )
+
+@app.api_route("/twilio-voice", methods=["GET", "POST"])
+async def twilio_voice():
+    """
+    Endpoint that Twilio requests when the call is answered.
+    Returns TwiML instructions telling Twilio what to say/do on the call.
+    """
+    twiml_response = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="alice">Hello! This is a test call from the Guardian AI telephony server. The call is successfully connected, and no AI engine is active at the moment.</Say>
+    <Pause length="2"/>
+    <Say>Thank you for testing, goodbye!</Say>
+    <Hangup/>
+</Response>"""
+    return Response(content=twiml_response, media_type="application/xml")
 
 if __name__ == "__main__":
     import uvicorn

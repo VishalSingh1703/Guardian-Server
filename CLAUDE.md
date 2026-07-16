@@ -4,7 +4,7 @@
 
 - **Repo:** `github.com/VishalSingh1703/Guardian-Server`
 - **Consumers:** `Guardian-App` (Kotlin owner/driver client) · `Guardian-Webapp` (Next.js bystander client).
-- **Status:** greenfield — the repo is effectively empty. This document defines what to build.
+- **Status:** in-progress — initial FastAPI structure and Twilio outbound call flow implemented.
 
 ---
 
@@ -105,3 +105,35 @@ Store per the platform PRD §5 `vehicle_profile` schema. Key points:
 - Secrets via env only; provide a `.env.example` (committed) and keep `.env` gitignored.
 - Long-running broadcast (IVR retry loop) should run as a background task / worker, not block the request.
 - Suggested verify: `uvicorn app.main:app --reload`, `pytest`, and exercise the two client flows against the live OpenAPI docs (`/docs`).
+
+---
+
+## 8. Current Implementation Status
+
+A basic FastAPI server framework and functional outbound telephony layer are implemented directly in the root directory:
+*   **`main.py`**: Declares the FastAPI application and exposes:
+    *   `GET /`: Health-check confirming system configuration status.
+    *   `POST /call`: Places an outbound voice call by calling the service layer.
+    *   `GET/POST /twilio-voice`: Serves TwiML callback XML instructions (TTS `<Say>`, `<Pause>`, `<Hangup>`) when Twilio answers.
+*   **`services.py`**: Orchestrates `twilio.rest.Client` to dispatch the outbound call using credentials loaded from `.env`.
+*   **`requirements.txt`**: Project dependencies including `fastapi`, `uvicorn`, `twilio`, and `pipecat-ai`.
+
+### Run and Test Commands
+
+*   **Start the Local Server**:
+    ```bash
+    python main.py
+    ```
+*   **Expose Local Server to Webhooks (Twilio requirement)**:
+    ```bash
+    ngrok http 8000
+    ```
+    *Ensure your `SERVER_URL` in `.env` matches the HTTPS URL provided by ngrok.*
+
+*   **Trigger an Outbound Call (test)**:
+    ```bash
+    curl -X POST "http://127.0.0.1:8000/call" \
+         -H "Content-Type: application/json" \
+         -d '{"to_phone": "+917559375437"}'
+    ```
+
