@@ -1,8 +1,15 @@
-import os
+"""Telephony service layer.
+
+Holds the call-orchestration logic, isolated from the web/transport layer
+(routers) so it can be triggered, tested, or swapped without touching FastAPI.
+"""
+
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any, Dict
 from twilio.rest import Client
+
+from app.core.config import settings
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -12,9 +19,9 @@ def make_actual_twilio_call(to_phone: str, from_phone: str) -> Dict[str, Any]:
     """
     Initiates an actual Twilio outbound call pointing to the server's TwiML endpoint.
     """
-    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    server_url = os.getenv("SERVER_URL")
+    account_sid = settings.TWILIO_ACCOUNT_SID
+    auth_token = settings.TWILIO_AUTH_TOKEN
+    server_url = settings.SERVER_URL
 
     if not account_sid or not auth_token:
         raise ValueError("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN must be set in the environment.")
@@ -56,7 +63,7 @@ def initiate_call_flow(to_phone: str, from_phone: str = None) -> Dict[str, Any]:
     logger.info(f"Received request to initiate call flow to '{to_phone}'")
     
     if not from_phone:
-        from_phone = os.getenv("TWILIO_PHONE_NUMBER")
+        from_phone = settings.TWILIO_PHONE_NUMBER
         if not from_phone:
             raise ValueError("TWILIO_PHONE_NUMBER must be set in the environment or passed explicitly.")
         logger.info(f"No 'from_phone' provided. Using default Twilio number: {from_phone}")
