@@ -35,22 +35,32 @@ Chosen to fit the AI/CV/OCR + telephony workload:
 - **Push:** Firebase Admin SDK (FCM) for owner courtesy alerts.
 - **Rate limiting:** Redis-backed (e.g. `slowapi` or a custom token-bucket) for node throttling + cooldowns.
 
-Suggested layout:
+### Current layout (what exists today)
+Organized into a layered package: **routers** (transport) → **services** (business logic) → **core/config** (env). Add new features by adding a router + service pair and registering the router in `app/main.py` — never by fattening existing handlers.
 ```
+run.py                    # local dev entrypoint (python run.py)
 app/
-  main.py                 # FastAPI app + router registration
-  core/config.py          # settings, secrets from env (never commit keys)
-  core/security.py        # AES-GCM encrypt/decrypt, SHA256 plate hashing
-  db/                     # SQLAlchemy models, session, Alembic
-  models/                 # Pydantic request/response schemas
-  services/
-    ocr.py                # plate frame -> uppercase string -> SHA256
-    vision.py             # AI damage verification (anti-abuse gate)
-    telephony.py          # Twilio SMS + IVR orchestration + retry loop
-    geofence.py           # proximity validation
-    push.py               # FCM courtesy alerts
+  main.py                 # create_app() — builds FastAPI, registers routers
+  core/
+    config.py             # Settings: single source of truth for all env vars
+  schemas/
+    telephony.py          # Pydantic request/response models
   routers/
-    auth.py  vehicles.py  incidents.py  utilities.py  webhooks.py
+    health.py             # GET /
+    telephony.py          # POST /call (thin: validates + delegates to service)
+  services/
+    telephony.py          # call-flow orchestration + (dummy) Twilio integration
+```
+
+### Planned modules (add only when the feature lands — YAGNI, don't scaffold empty)
+```
+app/core/security.py      # AES-GCM encrypt/decrypt, SHA256 plate hashing
+app/db/                   # SQLAlchemy models, session, Alembic
+app/services/ocr.py       # plate frame -> uppercase string -> SHA256
+app/services/vision.py    # AI damage verification (anti-abuse gate)
+app/services/geofence.py  # proximity validation
+app/services/push.py      # FCM courtesy alerts
+app/routers/auth.py · vehicles.py · incidents.py · utilities.py · webhooks.py
 ```
 
 ---
