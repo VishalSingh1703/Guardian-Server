@@ -4,12 +4,14 @@ Thin transport layer: validates the request, delegates to the service layer,
 and maps failures to HTTP responses. No business logic lives here.
 """
 
-from fastapi import APIRouter, HTTPException, status, Response
+import logging
+from fastapi import APIRouter, HTTPException, status, Response, Request
 
 from app.schemas.telephony import CallRequest
 from app.services.telephony import initiate_call_flow
 
 router = APIRouter(tags=["telephony"])
+logger = logging.getLogger("uvicorn.error")
 
 
 @router.post("/call", status_code=status.HTTP_200_OK)
@@ -17,6 +19,8 @@ async def make_call(payload: CallRequest):
     """
     Triggers an outbound call by invoking the service layer.
     """
+    # Direct print statement to guarantee console output
+    print(f"\n[DEBUG] ===> /call endpoint hit! to_phone={payload.to_phone} <===\n", flush=True)
     try:
         result = initiate_call_flow(
             to_phone=payload.to_phone,
@@ -30,11 +34,24 @@ async def make_call(payload: CallRequest):
         )
 
 @router.api_route("/twilio-voice", methods=["GET", "POST"])
-async def twilio_voice():
+async def twilio_voice(request: Request):
     """
     Endpoint that Twilio requests when the call is answered.
-    Returns TwiML instructions telling Twilio what to say/do on the call.
+    Logs incoming Twilio request parameters and returns TwiML instructions.
     """
+    # Direct print statement to guarantee console output
+    print("\n[DEBUG] ===> /twilio-voice webhook endpoint hit! <===\n", flush=True)
+    
+    # Parse form data parameters sent by Twilio
+    try:
+        form_data = await request.form()
+        call_sid = form_data.get("CallSid", "unknown")
+        call_status = form_data.get("CallStatus", "unknown")
+        direction = form_data.get("Direction", "unknown")
+        logger.info(f"☎️ Twilio Webhook triggered! CallSid: {call_sid} | Status: {call_status} | Direction: {direction}")
+    except Exception as e:
+        logger.warning(f"Could not parse form data from Twilio: {str(e)}")
+
     twiml_response = """<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say voice="alice">Hello! This is a test call from the Guardian AI telephony server. The call is successfully connected, and no AI engine is active at the moment.</Say>

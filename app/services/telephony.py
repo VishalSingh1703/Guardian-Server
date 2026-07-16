@@ -11,9 +11,8 @@ from twilio.rest import Client
 
 from app.core.config import settings
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("telephony-services")
+# Use the uvicorn error logger to ensure logs print to the console under Uvicorn
+logger = logging.getLogger("uvicorn.error")
 
 def make_actual_twilio_call(to_phone: str, from_phone: str) -> Dict[str, Any]:
     """
@@ -29,6 +28,7 @@ def make_actual_twilio_call(to_phone: str, from_phone: str) -> Dict[str, Any]:
     if not server_url:
         raise ValueError("SERVER_URL must be set in the environment to serve TwiML callbacks.")
 
+    print(f"\n[DEBUG] Connecting to Twilio API to call {to_phone} from {from_phone}...\n", flush=True)
     logger.info(f"Initiating actual Twilio call from '{from_phone}' to '{to_phone}'...")
     
     client = Client(account_sid, auth_token)
@@ -53,6 +53,7 @@ def make_actual_twilio_call(to_phone: str, from_phone: str) -> Dict[str, Any]:
         "message": f"Twilio call initiated successfully with SID: {call.sid}"
     }
     
+    print(f"\n[DEBUG] Twilio Call Queued! SID: {call.sid}\n", flush=True)
     logger.info(f"Call successfully queued with Twilio. SID: {call.sid}")
     return result
 
@@ -60,6 +61,7 @@ def initiate_call_flow(to_phone: str, from_phone: str = None) -> Dict[str, Any]:
     """
     Function called by the endpoint. Validates arguments and triggers the Twilio call.
     """
+    print(f"\n[DEBUG] initiate_call_flow starting to {to_phone}...\n", flush=True)
     logger.info(f"Received request to initiate call flow to '{to_phone}'")
     
     if not from_phone:
