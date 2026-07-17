@@ -4,21 +4,49 @@ Holds the call-orchestration logic, isolated from the web/transport layer
 (routers) so it can be triggered, tested, or swapped without touching FastAPI.
 """
 
-import logging
+# ── stdlib ────────────────────────────────────────────────────────────────────
+import asyncio
 import json
+import logging
+import os
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+# ── third-party ───────────────────────────────────────────────────────────────
+from loguru import logger
 from twilio.rest import Client
 from fastapi import WebSocket
 
+# ── pipecat: pipeline & transport ─────────────────────────────────────────────
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
+from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.transports.websocket.fastapi import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
 from pipecat.serializers.twilio import TwilioFrameSerializer
-from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService, GeminiLiveLLMSettings
+
+# ── pipecat: LLM & audio ─────────────────────────────────────────────────────
+from pipecat.services.google.gemini_live.llm import (
+    GeminiLiveLLMService,
+    InputParams,
+    GeminiModalities,
+)
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.frames.frames import LLMContextFrame
+from pipecat.transcriptions.language import Language
+
+# ── pipecat: tools, frames & processors ───────────────────────────────────────
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.services.llm_service import FunctionCallParams
+from pipecat.processors.user_idle_processor import UserIdleProcessor
+from pipecat.frames.frames import EndTaskFrame, LLMMessagesAppendFrame, TTSSpeakFrame
+from pipecat.processors.frame_processor import FrameDirection
+
+
 
 from app.core.config import settings
 from app.core.prompts import EMERGENCY_AGENT_SYSTEM_PROMPT
@@ -89,122 +117,286 @@ def initiate_call_flow(to_phone: str, from_phone: str = None) -> Dict[str, Any]:
     return call_result
 
 
-async def run_emergency_agent(websocket: WebSocket):
-    """
-    WebSocket session handler for the Pipecat Gemini Live emergency agent.
-    Bridges the Twilio WebSocket media stream with Gemini Multimodal Live.
-    """
-    print("\n[DEBUG] Starting run_emergency_agent session...\n", flush=True)
-    logger.info("Initializing Pipecat Gemini Live agent...")
+# async def run_emergency_agent(websocket: WebSocket):
+#     """
+#     WebSocket session handler for the Pipecat Gemini Live emergency agent.
+#     Bridges the Twilio WebSocket media stream with Gemini Multimodal Live.
+#     """
+#     print("\n[DEBUG] Starting run_emergency_agent session...\n", flush=True)
+#     logger.info("Initializing Pipecat Gemini Live agent...")
 
-    if not settings.gemini_configured:
-        logger.error("Gemini API key is not configured!")
-        await websocket.close()
-        return
+#     if not settings.gemini_configured:
+#         logger.error("Gemini API key is not configured!")
+#         await websocket.close()
+#         return
 
-    # 1. Wait for the start event from Twilio to retrieve streamSid and callSid
-    stream_sid = None
-    call_sid = None
+#     # 1. Wait for the start event from Twilio to retrieve streamSid and callSid
+#     stream_sid = None
+#     call_sid = None
     
-    # Twilio sends a series of JSON messages starting with 'connected' and then 'start'
-    async for message in websocket.iter_text():
-        try:
-            data = json.loads(message)
-            if data.get("event") == "start":
-                start_data = data["start"]
-                stream_sid = start_data["streamSid"]
-                call_sid = start_data.get("callSid")
-                logger.info(f"☎️ Received Twilio start event. streamSid: {stream_sid}, callSid: {call_sid}")
-                break
-        except Exception as e:
-            logger.error(f"Error parsing initial Twilio message: {e}")
-            break
+#     # Twilio sends a series of JSON messages starting with 'connected' and then 'start'
+#     async for message in websocket.iter_text():
+#         try:
+#             data = json.loads(message)
+#             if data.get("event") == "start":
+#                 start_data = data["start"]
+#                 stream_sid = start_data["streamSid"]
+#                 call_sid = start_data.get("callSid")
+#                 logger.info(f"☎️ Received Twilio start event. streamSid: {stream_sid}, callSid: {call_sid}")
+#                 break
+#         except Exception as e:
+#             logger.error(f"Error parsing initial Twilio message: {e}")
+#             break
 
-    if not stream_sid:
-        logger.error("Failed to receive streamSid from Twilio handshake")
-        await websocket.close()
+#     if not stream_sid:
+#         logger.error("Failed to receive streamSid from Twilio handshake")
+#         await websocket.close()
+#         return
+
+#     # Initialize TwilioFrameSerializer with the extracted SIDs and credentials
+#     twilio_serializer = TwilioFrameSerializer(
+#         stream_sid=stream_sid,
+#         call_sid=call_sid,
+#         account_sid=settings.TWILIO_ACCOUNT_SID,
+#         auth_token=settings.TWILIO_AUTH_TOKEN
+#     )
+
+#     # Setup transport for Twilio WebSockets
+#     transport = FastAPIWebsocketTransport(
+#         websocket=websocket,
+#         params=FastAPIWebsocketParams(
+#             audio_in_enabled=True,
+#             audio_out_enabled=True,
+#             audio_in_sample_rate=8000,
+#             audio_out_sample_rate=8000,
+#             serializer=twilio_serializer,
+#         ),
+#     )
+
+#     # Prepend 'models/' prefix to settings.GEMINI_MODEL if not present
+#     model_name = settings.GEMINI_MODEL
+#     if not model_name.startswith("models/"):
+#         model_name = f"models/{model_name}"
+
+#     # Initialize Gemini Live LLM Service
+#     llm = GeminiLiveLLMService(
+#         api_key=settings.GEMINI_API_KEY,
+#         settings=GeminiLiveLLMService.Settings(
+#             model=model_name,
+#             voice="Puck",
+#             system_instruction=EMERGENCY_AGENT_SYSTEM_PROMPT,
+#         ),
+#     )
+
+#     # Create context (empty) and aggregator pair with local VAD for turn detection
+#     context = LLMContext()
+#     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
+#         context,
+#         realtime_service_mode=True,
+#         user_params=LLMUserAggregatorParams(
+#             vad_analyzer=SileroVADAnalyzer(),
+#         ),
+#     )
+
+#     # Build the pipeline
+#     pipeline = Pipeline([
+#         transport.input(),
+#         user_aggregator,
+#         llm,
+#         transport.output(),
+#         assistant_aggregator,
+#     ])
+
+#     worker = PipelineWorker(
+#         pipeline,
+#         params=PipelineParams(
+#             enable_metrics=True,
+#             enable_usage_metrics=True,
+#         ),
+#     )
+
+#     @transport.event_handler("on_client_connected")
+#     async def on_client_connected(transport, client):
+#         logger.info(f"☎️ Twilio WebSocket media stream connected! Client: {client}")
+#         # Kick off the conversation: add a developer message and send LLMRunFrame
+#         context.add_message(
+#             {
+#                 "role": "developer",
+#                 "content": "Please greet the contact and explain the emergency situation.",
+#             }
+#         )
+#         await worker.queue_frames([LLMRunFrame()])
+
+#     @transport.event_handler("on_client_disconnected")
+#     async def on_client_disconnected(transport, client):
+#         logger.info(f"☎️ Twilio WebSocket media stream disconnected! Client: {client}")
+#         await worker.cancel()
+
+#     try:
+#         logger.info("Running Pipecat pipeline...")
+#         runner = WorkerRunner(handle_sigint=False)
+#         await runner.add_workers(worker)
+#         await runner.run()
+#     except Exception as e:
+#         logger.error(f"Error running emergency Pipecat agent pipeline: {str(e)}")
+#     finally:
+#         logger.info("Pipecat emergency agent session finished.")
+
+
+
+
+async def terminate_call(params: FunctionCallParams):
+    logger.info("calling terminate_call function")
+    await params.result_callback(
+        {"status": "call_ended", "message": "The conversation has ended."}
+    )
+    await params.llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
+
+
+async def run_agent_live_gemini_twilio(
+    websocket: WebSocket,
+    api_key: str,
+    model: str = "gemini-2.0-flash-live-001",
+    voice: Optional[str] = "Aoede",
+    language: str = "en-US",
+    greeting_text: Optional[str] = None,
+    system_instruction: Optional[str] = None,
+    dynamic_instruction: Optional[str] = None,
+):
+    """Low-latency realtime voice agent: Gemini Live (AI Studio API) + Twilio Media Streams."""
+    if not api_key:
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("Google/Gemini API key is required for AI Studio")
+
+    language_map = {
+        "en-US": Language.EN_US, "en-IN": Language.EN_IN, "en-GB": Language.EN_GB,
+        "hi-IN": Language.HI_IN, "bn-IN": Language.BN_IN, "gu-IN": Language.GU_IN,
+        "kn-IN": Language.KN_IN, "ml-IN": Language.ML_IN, "mr-IN": Language.MR_IN,
+        "ta-IN": Language.TA_IN, "te-IN": Language.TE_IN,
+    }
+    pipecat_language = language_map.get(language, Language.EN_US)
+
+    # Twilio handshake: consume "connected" then "start" to grab streamSid + callSid
+    connected_msg = await websocket.receive_json()
+    logger.info(f"Twilio connected: {connected_msg}")
+    if connected_msg.get("event") != "connected":
+        await websocket.close(code=1000)
         return
 
-    # Initialize TwilioFrameSerializer with the extracted SIDs and credentials
-    twilio_serializer = TwilioFrameSerializer(
+    start_msg = await websocket.receive_json()
+    logger.info(f"Twilio start: {start_msg}")
+    if start_msg.get("event") != "start":
+        await websocket.close(code=1000)
+        return
+
+    stream_sid = start_msg["start"]["streamSid"]
+    call_sid = start_msg["start"].get("callSid")
+
+    serializer = TwilioFrameSerializer(
         stream_sid=stream_sid,
         call_sid=call_sid,
-        account_sid=settings.TWILIO_ACCOUNT_SID,
-        auth_token=settings.TWILIO_AUTH_TOKEN
+        account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
+        auth_token=os.getenv("TWILIO_AUTH_TOKEN"),
     )
 
-    # Setup transport for Twilio WebSockets
+    vad_analyzer = SileroVADAnalyzer(
+        sample_rate=8000,
+        params=VADParams(confidence=0.7, start_secs=0.2, stop_secs=0.5),
+    )
+
     transport = FastAPIWebsocketTransport(
-        websocket=websocket,
+        websocket,
         params=FastAPIWebsocketParams(
+            serializer=serializer,
             audio_in_enabled=True,
             audio_out_enabled=True,
-            audio_in_sample_rate=16000,
-            audio_out_sample_rate=24000,
-            serializer=twilio_serializer,
+            add_wav_header=False,
+            vad_analyzer=vad_analyzer,
+            vad_enabled=True,
+            vad_audio_passthrough=True,
         ),
     )
 
-    # Initialize Gemini Live LLM Service with standard settings
-    llm = GeminiLiveLLMService(
-        api_key=settings.GEMINI_API_KEY,
-        settings=GeminiLiveLLMService.Settings(
-            model="models/gemini-2.5-flash-native-audio-preview-12-2025",
-            system_instruction=EMERGENCY_AGENT_SYSTEM_PROMPT,
-            voice="Puck",  # Recommended voice for emergency agent
+    tools = ToolsSchema(standard_tools=[
+        FunctionSchema(
+            name="terminate_call",
+            description=(
+                "Ends the voice call permanently. ONLY use when the user "
+                "explicitly asks to end the call (e.g., 'goodbye', 'hang up', "
+                "'end the call') or confirms they have no more questions."
+            ),
+            properties={},
+            required=[],
         )
-    )
-
-    # Create the pipeline: Twilio input -> Gemini Live -> Twilio output
-    pipeline = Pipeline([
-        transport.input(),
-        llm,
-        transport.output(),
     ])
 
-    # Initialize the runner and task
-    runner = PipelineRunner()
+    llm = GeminiLiveLLMService(
+        api_key=api_key,
+        model=f"models/{model}",
+        voice_id=voice or "Aoede",
+        system_instruction=system_instruction or "",
+        tools=tools,
+        transcribe_model_audio=True,
+        params=InputParams(language=pipecat_language, modalities=GeminiModalities.AUDIO),
+    )
+    llm.register_function("terminate_call", terminate_call)
+
+    initial_messages = []
+    if dynamic_instruction:
+        initial_messages.append({"role": "user", "content": dynamic_instruction})
+    context_aggregator = llm.create_context_aggregator(LLMContext(messages=initial_messages))
+
+    async def handle_user_idle(processor: UserIdleProcessor, retry_count: int) -> bool:
+        if retry_count < 4:
+            prompts = {
+                1: "ask me if I am able to hear you",
+                2: "ask me if I am still there",
+                3: "Tell me that you can't hear me and you'll call back again.",
+            }
+            await processor.push_frame(
+                LLMMessagesAppendFrame(
+                    [{"role": "user", "content": prompts[retry_count]}], run_llm=True
+                )
+            )
+            return True
+        await processor.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
+        return False
+
+    pipeline = Pipeline([
+        transport.input(),
+        UserIdleProcessor(callback=handle_user_idle, timeout=8.0),
+        context_aggregator.user(),
+        llm,
+        transport.output(),
+        context_aggregator.assistant(),
+    ])
+
     task = PipelineTask(
         pipeline,
-        params=PipelineParams(
-            audio_in_sample_rate=16000,
-            audio_out_sample_rate=24000,
-        ),
+        params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
     )
+
+    async def enforce_hard_limit(t: PipelineTask, seconds: int = 360):
+        await asyncio.sleep(seconds)
+        logger.info(f"Forcefully terminating call after {seconds} seconds.")
+        await t.cancel()
+
+    timeout_handle = asyncio.create_task(enforce_hard_limit(task, 360))
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        logger.info(f"☎️ Twilio WebSocket media stream connected! Client: {client}")
-        print("\n[DEBUG] Twilio Media Stream Connected!\n", flush=True)
-        # Seed the conversation context to trigger the bot to greet the caller first
-        context = LLMContext(
-            messages=[
-                {"role": "user", "content": "Please greet the contact and explain the situation."}
-            ]
-        )
-        await task.queue_frame(LLMContextFrame(context))
+        logger.info("Twilio client connected")
+        if greeting_text:
+            await task.queue_frame(TTSSpeakFrame(greeting_text))
+        await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info(f"☎️ Twilio WebSocket media stream disconnected! Client: {client}")
-        print("\n[DEBUG] Twilio Media Stream Disconnected!\n", flush=True)
+        logger.info("Twilio client disconnected")
         await task.cancel()
 
     try:
-        logger.info("Running Pipecat pipeline task...")
-        await runner.run(task)
-    except Exception as e:
-        logger.error(f"Error running emergency Pipecat agent pipeline: {str(e)}")
-        print(f"\n[DEBUG] Pipeline task execution failed: {str(e)}\n", flush=True)
+        await PipelineRunner(handle_sigint=False).run(task)
     finally:
-        # Restore default signal handlers to prevent Ctrl+C/shutdown hangs on Windows
-        import signal
-        try:
-            signal.signal(signal.SIGINT, signal.default_int_handler)
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
-        except Exception as sig_err:
-            logger.warning(f"Failed to restore default signal handlers: {sig_err}")
-
-        logger.info("Pipecat emergency agent session finished.")
-        print("\n[DEBUG] run_emergency_agent session completed.\n", flush=True)
-
+        timeout_handle.cancel()

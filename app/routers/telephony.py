@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, HTTPException, status, Response, Request, WebSocket
 from app.core.config import settings
 from app.schemas.telephony import CallRequest
-from app.services.telephony import initiate_call_flow, run_emergency_agent
+from app.services.telephony import initiate_call_flow, run_agent_live_gemini_twilio
 
 router = APIRouter(tags=["telephony"])
 logger = logging.getLogger("uvicorn.error")
@@ -70,7 +70,6 @@ async def twilio_voice(request: Request):
 
     twiml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Connecting to the Guardian Emergency Assistant...</Say>
     <Connect>
         <Stream url="{websocket_url}" />
     </Connect>
@@ -87,7 +86,7 @@ async def websocket_endpoint(websocket: WebSocket):
     print("\n[DEBUG] WebSocket /ws upgrade requested by client...\n", flush=True)
     await websocket.accept()
     try:
-        await run_emergency_agent(websocket)
+        await run_agent_live_gemini_twilio(websocket)
     except Exception as e:
         logger.error(f"WebSocket error in /ws: {str(e)}")
         print(f"\n[DEBUG] WebSocket route error: {str(e)}\n", flush=True)
