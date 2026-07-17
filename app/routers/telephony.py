@@ -8,6 +8,7 @@ import logging
 from fastapi import APIRouter, HTTPException, status, Response, Request, WebSocket
 from app.core.config import settings
 from app.schemas.telephony import CallRequest
+from app.core.prompts import EMERGENCY_AGENT_SYSTEM_PROMPT
 from app.services.telephony import initiate_call_flow, run_agent_live_gemini_twilio
 
 router = APIRouter(tags=["telephony"])
@@ -86,7 +87,12 @@ async def websocket_endpoint(websocket: WebSocket):
     print("\n[DEBUG] WebSocket /ws upgrade requested by client...\n", flush=True)
     await websocket.accept()
     try:
-        await run_agent_live_gemini_twilio(websocket)
+        await run_agent_live_gemini_twilio(
+            websocket,
+            api_key=settings.GEMINI_API_KEY,
+            model=settings.GEMINI_MODEL,
+            system_instruction=EMERGENCY_AGENT_SYSTEM_PROMPT,
+        )
     except Exception as e:
         logger.error(f"WebSocket error in /ws: {str(e)}")
         print(f"\n[DEBUG] WebSocket route error: {str(e)}\n", flush=True)

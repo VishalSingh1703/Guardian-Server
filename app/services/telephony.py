@@ -36,14 +36,14 @@ from pipecat.services.google.gemini_live.llm import (
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.transcriptions.language import Language
 
 # ── pipecat: tools, frames & processors ───────────────────────────────────────
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams
-from pipecat.processors.user_idle_processor import UserIdleProcessor
-from pipecat.frames.frames import EndTaskFrame, LLMMessagesAppendFrame, TTSSpeakFrame
+from pipecat.frames.frames import EndTaskFrame, LLMRunFrame, TTSSpeakFrame
 from pipecat.processors.frame_processor import FrameDirection
 
 
@@ -345,27 +345,10 @@ async def run_agent_live_gemini_twilio(
     initial_messages = []
     if dynamic_instruction:
         initial_messages.append({"role": "user", "content": dynamic_instruction})
-    context_aggregator = llm.create_context_aggregator(LLMContext(messages=initial_messages))
-
-    async def handle_user_idle(processor: UserIdleProcessor, retry_count: int) -> bool:
-        if retry_count < 4:
-            prompts = {
-                1: "ask me if I am able to hear you",
-                2: "ask me if I am still there",
-                3: "Tell me that you can't hear me and you'll call back again.",
-            }
-            await processor.push_frame(
-                LLMMessagesAppendFrame(
-                    [{"role": "user", "content": prompts[retry_count]}], run_llm=True
-                )
-            )
-            return True
-        await processor.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
-        return False
+    context_aggregator = LLMContextAggregatorPair(LLMContext(messages=initial_messages))
 
     pipeline = Pipeline([
         transport.input(),
-        UserIdleProcessor(callback=handle_user_idle, timeout=8.0),
         context_aggregator.user(),
         llm,
         transport.output(),
@@ -389,7 +372,7 @@ async def run_agent_live_gemini_twilio(
         logger.info("Twilio client connected")
         if greeting_text:
             await task.queue_frame(TTSSpeakFrame(greeting_text))
-        await task.queue_frames([context_aggregator.user().get_context_frame()])
+        await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
