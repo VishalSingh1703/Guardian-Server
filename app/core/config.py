@@ -10,7 +10,7 @@ import os
 from dotenv import load_dotenv
 
 # Load variables from a local .env once, at import time, for the whole app.
-load_dotenv()
+load_dotenv(override=True)
 
 # Placeholder value shipped in .env.example; used to detect an unconfigured account.
 _UNCONFIGURED_TWILIO_SID = "your_twilio_account_sid_here"
@@ -32,7 +32,8 @@ class Settings:
 
     # --- Gemini / Pipecat ---
     GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    VISION_CONFIDENCE_THRESHOLD: float = float(os.getenv("VISION_CONFIDENCE_THRESHOLD", "0.80"))
 
     @property
     def twilio_configured(self) -> bool:

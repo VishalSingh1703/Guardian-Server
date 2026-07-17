@@ -7,7 +7,7 @@ this file's handlers.
 
 from fastapi import FastAPI
 
-from app.routers import health, telephony
+from app.routers import health, telephony, vision
 
 
 def create_app() -> FastAPI:
@@ -20,6 +20,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(telephony.router)
+    app.include_router(vision.router)
 
     return app
 
