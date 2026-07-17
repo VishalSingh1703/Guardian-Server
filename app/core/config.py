@@ -30,10 +30,19 @@ class Settings:
     TWILIO_AUTH_TOKEN: str | None = os.getenv("TWILIO_AUTH_TOKEN")
     TWILIO_PHONE_NUMBER: str = os.getenv("TWILIO_PHONE_NUMBER", "+1234567890")
 
+    # --- Gemini / Pipecat ---
+    GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
     @property
     def twilio_configured(self) -> bool:
         """True once the Twilio account SID has been set to a real value."""
         return self.TWILIO_ACCOUNT_SID not in [None, "", _UNCONFIGURED_TWILIO_SID]
+
+    @property
+    def gemini_configured(self) -> bool:
+        """True once the Gemini API key has been set to a real value."""
+        return self.GEMINI_API_KEY not in [None, ""]
 
 
 

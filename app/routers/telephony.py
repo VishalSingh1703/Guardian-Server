@@ -5,10 +5,10 @@ and maps failures to HTTP responses. No business logic lives here.
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, status, Response, Request
-
+from fastapi import APIRouter, HTTPException, status, Response, Request, WebSocket
+from app.core.config import settings
 from app.schemas.telephony import CallRequest
-from app.services.telephony import initiate_call_flow
+from app.services.telephony import initiate_call_flow, run_emergency_agent
 
 router = APIRouter(tags=["telephony"])
 logger = logging.getLogger("uvicorn.error")
@@ -37,12 +37,17 @@ async def make_call(payload: CallRequest):
 async def twilio_voice(request: Request):
     """
     Endpoint that Twilio requests when the call is answered.
-    Logs incoming Twilio request parameters and returns TwiML instructions.
+    Logs incoming Twilio request parameters and returns TwiML instructions
+    to connect to our WebSocket audio stream.
     """
     # Direct print statement to guarantee console output
     print("\n[DEBUG] ===> /twilio-voice webhook endpoint hit! <===\n", flush=True)
     
     # Parse form data parameters sent by Twilio
+    call_sid = "unknown"
+    call_status = "unknown"
+    direction = "unknown"
+    
     try:
         form_data = await request.form()
         call_sid = form_data.get("CallSid", "unknown")
@@ -52,11 +57,38 @@ async def twilio_voice(request: Request):
     except Exception as e:
         logger.warning(f"Could not parse form data from Twilio: {str(e)}")
 
-    twiml_response = """<?xml version="1.0" encoding="UTF-8"?>
+    # Resolve websocket URL based on configured SERVER_URL
+    server_url = settings.SERVER_URL
+    if server_url.startswith("https://"):
+        websocket_url = server_url.replace("https://", "wss://") + "/ws"
+    elif server_url.startswith("http://"):
+        websocket_url = server_url.replace("http://", "ws://") + "/ws"
+    else:
+        websocket_url = f"wss://{server_url}/ws"
+
+    logger.info(f"Connecting Twilio CallSid {call_sid} to WebSocket Stream: {websocket_url}")
+
+    twiml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Hello! This is a test call from the Guardian AI telephony server. The call is successfully connected, and no AI engine is active at the moment.</Say>
-    <Pause length="2"/>
-    <Say>Thank you for testing, goodbye!</Say>
-    <Hangup/>
+    <Say voice="alice">Connecting to the Guardian Emergency Assistant...</Say>
+    <Connect>
+        <Stream url="{websocket_url}" />
+    </Connect>
 </Response>"""
     return Response(content=twiml_response, media_type="application/xml")
+
+
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket connection point for Twilio Media Streams.
+    Spins up the Pipecat Gemini Live real-time audio pipeline.
+    """
+    print("\n[DEBUG] WebSocket /ws upgrade requested by client...\n", flush=True)
+    await websocket.accept()
+    try:
+        await run_emergency_agent(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error in /ws: {str(e)}")
+        print(f"\n[DEBUG] WebSocket route error: {str(e)}\n", flush=True)
+

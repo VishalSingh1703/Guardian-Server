@@ -17,6 +17,7 @@ async def health_check():
         "server": "Guardian AI Telephony Temp Server",
         "configs_loaded": {
             "twilio_configured": settings.twilio_configured,
+            "gemini_configured": settings.gemini_configured,
             "server_url": settings.SERVER_URL,
         },
     }
