@@ -34,6 +34,16 @@ class Settings:
     GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
 
+    # --- Agent selection & Sarvam+Murf pipeline ---
+    # AGENT_TYPE = "gemini_live" (default, existing Gemini Live agent) or "sarvam"
+    # (Sarvam STT + Gemini AI Studio + Murf TTS).
+    AGENT_TYPE: str = os.getenv("AGENT_TYPE", "gemini_live")
+    AGENT_LANGUAGE: str = os.getenv("AGENT_LANGUAGE", "en-IN")
+    SARVAM_API_KEY: str | None = os.getenv("SARVAM_API_KEY")
+    MURF_API_KEY: str | None = os.getenv("MURF_API_KEY")
+    # Non-Live Gemini model (AI Studio) used by the Sarvam+Murf agent.
+    SARVAM_AGENT_LLM_MODEL: str = os.getenv("SARVAM_AGENT_LLM_MODEL", "gemini-3.1-flash-lite")
+
     @property
     def twilio_configured(self) -> bool:
         """True once the Twilio account SID has been set to a real value."""
