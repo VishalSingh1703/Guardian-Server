@@ -10,7 +10,7 @@ import os
 from dotenv import load_dotenv
 
 # Load variables from a local .env once, at import time, for the whole app.
-load_dotenv()
+load_dotenv(override=True)
 
 # Placeholder value shipped in .env.example; used to detect an unconfigured account.
 _UNCONFIGURED_TWILIO_SID = "your_twilio_account_sid_here"
@@ -24,6 +24,11 @@ class Settings:
     PORT: int = int(os.getenv("PORT", 8000))
     # Base URL Twilio uses for webhook / TwiML callbacks.
     SERVER_URL: str = os.getenv("SERVER_URL", "https://your-ngrok-subdomain.ngrok-free.app")
+    # Browser origins allowed to call this API (the Webapp runs on a different origin).
+    # Comma-separated list, or "*" to allow any origin. Default "*" for easy local dev.
+    CORS_ALLOW_ORIGINS: list[str] = [
+        o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()
+    ]
 
     # --- Twilio ---
     TWILIO_ACCOUNT_SID: str | None = os.getenv("TWILIO_ACCOUNT_SID")
@@ -32,7 +37,7 @@ class Settings:
 
     # --- Gemini / Pipecat ---
     GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-native-audio-preview-12-2025")
 
     # --- Agent selection & Sarvam+Murf pipeline ---
     # AGENT_TYPE = "gemini_live" (default, existing Gemini Live agent) or "sarvam"
@@ -43,6 +48,7 @@ class Settings:
     MURF_API_KEY: str | None = os.getenv("MURF_API_KEY")
     # Non-Live Gemini model (AI Studio) used by the Sarvam+Murf agent.
     SARVAM_AGENT_LLM_MODEL: str = os.getenv("SARVAM_AGENT_LLM_MODEL", "gemini-3.1-flash-lite")
+    VISION_CONFIDENCE_THRESHOLD: float = float(os.getenv("VISION_CONFIDENCE_THRESHOLD", "0.80"))
 
     @property
     def twilio_configured(self) -> bool:
