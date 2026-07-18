@@ -4,7 +4,7 @@
 
 - **Repo:** `github.com/VishalSingh1703/Guardian-Server`
 - **Consumers:** `Guardian-App` (Kotlin owner/driver client) · `Guardian-Webapp` (Next.js bystander client).
-- **Status:** in-progress — initial FastAPI structure and Twilio outbound call flow implemented.
+- **Status:** in-progress — FastAPI server, Twilio/Pipecat telephony, and Vision module (Phase 1) implemented.
 
 ---
 
@@ -28,7 +28,7 @@ Chosen to fit the AI/CV/OCR + telephony workload:
 - **Runtime:** Python 3.11+ · **FastAPI** + **Uvicorn** (async, typed, OpenAPI out of the box).
 - **Validation:** Pydantic v2 models for every request/response (they *are* the API contract).
 - **DB:** PostgreSQL + SQLAlchemy 2.x (async) + Alembic migrations.
-- **AI verification:** **Anthropic Python SDK** (`anthropic`) for vision-based damage confirmation; the latest Claude models are the default choice for the CV/anti-abuse gate.
+- **AI verification:** Google `google-genai` SDK — `gemini-3.1-flash-lite` for both damage detection and license plate OCR (current default; swappable via `GEMINI_MODEL` env var).
 - **OCR / CV:** OpenCV for frame handling; EasyOCR or Tesseract for plate text (or a cloud OCR API — abstract it behind an interface so it's swappable).
 - **Telephony/Voice AI:** **Twilio Python SDK** — Programmable SMS + Programmable Voice (TwiML for IVR, `<Gather>` for DTMF, `<Say>`/TTS for prompts).
 - **Crypto:** `cryptography` (`AESGCM` for PII at rest, `hashlib.sha256` for plate identity).
@@ -36,30 +36,40 @@ Chosen to fit the AI/CV/OCR + telephony workload:
 - **Rate limiting:** Redis-backed (e.g. `slowapi` or a custom token-bucket) for node throttling + cooldowns.
 
 ### Current layout (what exists today)
-Organized into a layered package: **routers** (transport) → **services** (business logic) → **core/config** (env). Add new features by adding a router + service pair and registering the router in `app/main.py` — never by fattening existing handlers.
+Organized into a layered package: **routers** (transport) → **services/vision** (business logic) → **core/config** (env). Add new features by adding a router + service pair and registering the router in `app/main.py` — never by fattening existing handlers.
 ```
-run.py                    # local dev entrypoint (python run.py)
+run.py                        # local dev entrypoint (python run.py)
 app/
-  main.py                 # create_app() — builds FastAPI, registers routers
+  main.py                     # create_app() — builds FastAPI, registers routers
   core/
-    config.py             # Settings: single source of truth for all env vars
+    config.py                 # Settings: single source of truth for all env vars
+    prompts.py                # System prompts for telephony agent
   schemas/
-    telephony.py          # Pydantic request/response models
+    telephony.py              # Pydantic models for telephony
   routers/
-    health.py             # GET /
-    telephony.py          # POST /call (thin: validates + delegates to service)
+    health.py                 # GET /
+    telephony.py              # POST /call, GET+POST /twilio-voice, WS /ws
+    vision.py                 # Vision endpoints — plate + damage
   services/
-    telephony.py          # call-flow orchestration + (dummy) Twilio integration
+    telephony.py              # call-flow orchestration + Pipecat Gemini Live agent
+  vision/                     # Isolated vision module (Phase 1 complete)
+    README.md                 # Vision-specific API docs
+    interface.py              # Abstract VisionProvider base class
+    models.py                 # DamageAnalysisResult schema
+    plate_models.py           # PlateVerificationResult, UnifiedVerificationResult schemas
+    prompts.py                # Damage detection system prompt
+    plate_prompts.py          # Plate extraction system prompt
+    service.py                # VisionService (damage analysis)
+    plate_service.py          # PlateVerificationService (plate + manual matching)
+    providers/
+      gemini.py               # GeminiVisionProvider — analyze_damage + extract_plate
 ```
 
 ### Planned modules (add only when the feature lands — YAGNI, don't scaffold empty)
 ```
-app/core/security.py      # AES-GCM encrypt/decrypt, SHA256 plate hashing
-app/db/                   # SQLAlchemy models, session, Alembic
-app/services/ocr.py       # plate frame -> uppercase string -> SHA256
-app/services/vision.py    # AI damage verification (anti-abuse gate)
-app/services/geofence.py  # proximity validation
-app/services/push.py      # FCM courtesy alerts
+app/core/security.py          # AES-GCM encrypt/decrypt, SHA256 plate hashing
+app/db/                       # SQLAlchemy models, session, Alembic
+app/services/push.py          # FCM courtesy alerts
 app/routers/auth.py · vehicles.py · incidents.py · utilities.py · webhooks.py
 ```
 
@@ -120,30 +130,43 @@ Store per the platform PRD §5 `vehicle_profile` schema. Key points:
 
 ## 8. Current Implementation Status
 
-A basic FastAPI server framework and functional outbound telephony layer are implemented directly in the root directory:
-*   **`main.py`**: Declares the FastAPI application and exposes:
-    *   `GET /`: Health-check confirming system configuration status.
-    *   `POST /call`: Places an outbound voice call by calling the service layer.
-    *   `GET/POST /twilio-voice`: Serves TwiML callback XML instructions (TTS `<Say>`, `<Pause>`, `<Hangup>`) when Twilio answers.
-*   **`services.py`**: Orchestrates `twilio.rest.Client` to dispatch the outbound call using credentials loaded from `.env`.
-*   **`requirements.txt`**: Project dependencies including `fastapi`, `uvicorn`, `twilio`, and `pipecat-ai`.
+### ✅ Telephony Layer
+- `GET /` — Health check with config status
+- `POST /call` — Outbound Twilio call dispatch
+- `GET/POST /twilio-voice` — TwiML IVR callback (TTS `<Say>`, `<Pause>`, `<Hangup>`)
+- `WS /ws` — WebSocket for Pipecat + Gemini Live voice agent
 
-### Run and Test Commands
+### ✅ Vision Module — Phase 1
+Fully isolated in `app/vision/`. See [`app/vision/README.md`](./app/vision/README.md) for endpoint details.
 
-*   **Start the Local Server**:
-    ```bash
-    python main.py
-    ```
-*   **Expose Local Server to Webhooks (Twilio requirement)**:
-    ```bash
-    ngrok http 8000
-    ```
-    *Ensure your `SERVER_URL` in `.env` matches the HTTPS URL provided by ngrok.*
+- `POST /vision/verify-incident` — **Unified pipeline**: plate verification → damage analysis in one request. Short-circuits damage scan on plate mismatch (saves API credits).
+- `POST /vision/plate/verify` — Gemini OCR extracts plate from photo and compares against registered plate.
+- `POST /vision/plate/verify-manual` — Manual text entry fallback. Pure string normalization, no AI.
+- `POST /vision/webapp/analyze` — Standalone structural damage detection from 1–5 crash photos.
 
-*   **Trigger an Outbound Call (test)**:
-    ```bash
-    curl -X POST "http://127.0.0.1:8000/call" \
-         -H "Content-Type: application/json" \
-         -d '{"to_phone": "+917559375437"}'
-    ```
+**Gemini model in use:** `gemini-3.1-flash-lite` (set via `GEMINI_MODEL` env var).
 
+### ❌ Not Yet Built
+- Database (PostgreSQL + SQLAlchemy + Alembic)
+- Vehicle registration with AES-GCM encrypted PII
+- QR token → registered plate server-side lookup (currently passed by client)
+- Owner crash auto-detection endpoint (`POST /vision/app/analyze`) with g-force + GPS
+- Firebase FCM push notifications
+- Redis rate limiting + parking/vandalism cooldowns
+- OTP auth flow
+
+### Run and Test
+
+```bash
+# Start server
+python run.py
+
+# Full incident verification (unified pipeline)
+curl -X POST http://127.0.0.1:8000/vision/verify-incident \
+  -F "registered_plate=JH10CNN0029" \
+  -F "plate_image=@/path/to/plate.png" \
+  -F "damage_images=@/path/to/crash.png"
+
+# Interactive API docs
+open http://localhost:8000/docs
+```
