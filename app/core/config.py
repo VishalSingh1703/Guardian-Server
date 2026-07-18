@@ -37,7 +37,7 @@ class Settings:
 
     # --- Gemini / Pipecat ---
     GEMINI_API_KEY: str | None = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite-native-audio-preview-12-2025")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
     # --- Agent selection & Sarvam+Murf pipeline ---
     # AGENT_TYPE = "gemini_live" (default, existing Gemini Live agent) or "sarvam"
