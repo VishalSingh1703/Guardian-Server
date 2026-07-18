@@ -32,3 +32,23 @@ class VisionProvider(ABC):
             - analysis_notes: str
         """
         pass
+
+    @abstractmethod
+    async def extract_plate(
+        self,
+        image: bytes,
+        mime_type: str
+    ) -> Dict[str, Any]:
+        """Extracts the license plate number from a single image.
+
+        Args:
+            image: Image file as bytes.
+            mime_type: MIME type of the image (e.g. image/jpeg).
+
+        Returns:
+            A dictionary containing the parsed model response matching key fields:
+            - plate_number: str | None
+            - confidence: float
+            - plate_visible: bool
+        """
+        pass

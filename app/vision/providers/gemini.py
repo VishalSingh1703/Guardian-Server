@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.vision.interface import VisionProvider
 from app.vision.prompts import DAMAGE_DETECTION_SYSTEM_PROMPT, DAMAGE_DETECTION_USER_PROMPT
+from app.vision.plate_prompts import PLATE_EXTRACTION_SYSTEM_PROMPT, PLATE_EXTRACTION_USER_PROMPT
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -32,6 +33,23 @@ class GeminiDamageResponse(BaseModel):
     analysis_notes: str = Field(
         ..., 
         description="Forensic analysis notes detailing features or objects identified in the frames."
+    )
+
+
+class GeminiPlateResponse(BaseModel):
+    """Pydantic schema used to constrain the Gemini license plate extraction JSON response."""
+
+    plate_number: str | None = Field(
+        ...,
+        description="The extracted uppercase license plate number, or null if not readable."
+    )
+    confidence: float = Field(
+        ...,
+        description="Confidence score of the license plate extraction (between 0.0 and 1.0)."
+    )
+    plate_visible: bool = Field(
+        ...,
+        description="True if a license plate is visible and legible in the image."
     )
 
 
@@ -92,5 +110,48 @@ class GeminiVisionProvider(VisionProvider):
             return json.loads(result_text)
 
         except Exception as e:
-            logger.error(f"Error calling Gemini Vision API: {str(e)}")
+            logger.error(f"Error calling Gemini Vision API for damage analysis: {str(e)}")
+            raise e
+
+    async def extract_plate(
+        self, 
+        image: bytes, 
+        mime_type: str
+    ) -> Dict[str, Any]:
+        """Extracts the license plate number from a single image using Gemini Vision."""
+        if not image:
+            raise ValueError("No image provided for plate extraction.")
+
+        # Prepare content parts (image + prompt text)
+        contents = [
+            types.Part.from_bytes(
+                data=image,
+                mime_type=mime_type
+            ),
+            PLATE_EXTRACTION_USER_PROMPT
+        ]
+
+        try:
+            logger.info(f"Calling Gemini model {self.model_name} for plate extraction...")
+            
+            # Use the async client (client.aio) to execute non-blocking API calls
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=PLATE_EXTRACTION_SYSTEM_PROMPT,
+                    response_mime_type="application/json",
+                    response_schema=GeminiPlateResponse,
+                )
+            )
+
+            result_text = response.text
+            if not result_text:
+                raise ValueError("Received empty response from Gemini model.")
+
+            logger.info("Successfully received structured response from Gemini Vision for plate extraction.")
+            return json.loads(result_text)
+
+        except Exception as e:
+            logger.error(f"Error calling Gemini Vision API for plate extraction: {str(e)}")
             raise e
