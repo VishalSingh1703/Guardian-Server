@@ -24,6 +24,11 @@ class Settings:
     PORT: int = int(os.getenv("PORT", 8000))
     # Base URL Twilio uses for webhook / TwiML callbacks.
     SERVER_URL: str = os.getenv("SERVER_URL", "https://your-ngrok-subdomain.ngrok-free.app")
+    # Browser origins allowed to call this API (the Webapp runs on a different origin).
+    # Comma-separated list, or "*" to allow any origin. Default "*" for easy local dev.
+    CORS_ALLOW_ORIGINS: list[str] = [
+        o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()
+    ]
 
     # --- Twilio ---
     TWILIO_ACCOUNT_SID: str | None = os.getenv("TWILIO_ACCOUNT_SID")
